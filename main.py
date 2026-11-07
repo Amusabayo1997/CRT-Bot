@@ -210,7 +210,7 @@ def check_pair(name, ticker):
                         details = [d.replace("7.Time ✅","7.Time ❌ (Bad session)") for d in details]
                     if score < 6:
                         print(f"SKIP {name} 4H {direction} Score {score}/7")
-                        continue
+                        return results 
                     confirm_close = close_time + timedelta(hours=4)
                     if confirm_close >= BOT_START and (now - confirm_close).total_seconds() <= 3600:
                         key = f"{name}-4H-{close_time}-{direction}-{score}"
