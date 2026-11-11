@@ -82,13 +82,72 @@ def is_crt_sweep(prev, curr):
 
     return None
 
+def check_zone(df, curr_idx, direction, sweep_price):
+    zones = []
+    try:
+        lookback = df.iloc[max(0, curr_idx-30):curr_idx]
+        if len(lookback) < 5:
+            return zones
+        tol = abs(sweep_price) * 0.0035
+        swing_high = lookback["High"].max()
+        swing_low = lookback["Low"].min()
+        recent_highs = lookback["High"].nlargest(3).tolist()
+        recent_lows = lookback["Low"].nsmallest(3).tolist()
+
+        if direction == "BEARISH":
+            if abs(sweep_price - swing_high) <= tol:
+                zones.append("Supply / Resistance / POI")
+            for h in recent_highs:
+                if abs(sweep_price - h) <= tol and "Supply / Resistance / POI" not in zones:
+                    zones.append("Supply / Resistance / POI")
+                    break
+            for i in range(len(lookback)-1, max(0, len(lookback)-10), -1):
+                c = lookback.iloc[i]
+                if c["Close"] > c["Open"]:
+                    if abs(sweep_price - c["High"]) <= tol or abs(sweep_price - c["Close"]) <= tol:
+                        zones.append("Bearish OB")
+                        break
+        else:
+            if abs(sweep_price - swing_low) <= tol:
+                zones.append("Demand / Support / POI")
+            for l in recent_lows:
+                if abs(sweep_price - l) <= tol and "Demand / Support / POI" not in zones:
+                    zones.append("Demand / Support / POI")
+                    break
+            for i in range(len(lookback)-1, max(0, len(lookback)-10), -1):
+                c = lookback.iloc[i]
+                if c["Close"] < c["Open"]:
+                    if abs(sweep_price - c["Low"]) <= tol or abs(sweep_price - c["Close"]) <= tol:
+                        zones.append("Bullish OB")
+                        break
+
+        for i in range(2, len(lookback)):
+            c0 = lookback.iloc[i-2]
+            c2 = lookback.iloc[i]
+            if c0["High"] < c2["Low"]:
+                fvg_low = c0["High"]
+                fvg_high = c2["Low"]
+                if direction == "BULLISH" and fvg_low - tol <= sweep_price <= fvg_high + tol:
+                    zones.append("FVG (Bullish Gap)")
+                    break
+            if c0["Low"] > c2["High"]:
+                fvg_low = c2["High"]
+                fvg_high = c0["Low"]
+                if direction == "BEARISH" and fvg_low - tol <= sweep_price <= fvg_high + tol:
+                    zones.append("FVG (Bearish Gap)")
+                    break
+    except Exception as e:
+        print(f"Zone check error: {e}")
+    return zones
+
 def check_pair(name, ticker):
     results = []
     now = datetime.now(timezone.utc)
     try:
-        for tf, interval, tf_hours in [("DAILY", "1d", 24), ("WEEKLY", "1wk", 168)]:
-            df = yf.download(ticker, period="3mo", interval=interval, progress=False, auto_adjust=False)
-            if df.empty or len(df) < 3:
+        # FIXED: DAILY = 6mo, WEEKLY = 2y (so WEEKLY gets enough candles)
+        for tf, interval, period, tf_hours in [("DAILY", "1d", "6mo", 24), ("WEEKLY", "1wk", "2y", 168)]:
+            df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
+            if df.empty or len(df) < 35:
                 continue
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
@@ -97,6 +156,13 @@ def check_pair(name, ticker):
             curr = df.iloc[-2]
             crt = is_crt_sweep(prev, curr)
             if not crt:
+                continue
+
+            direction = "BEARISH" if "BEARISH" in crt else "BULLISH"
+            sweep_price = curr["High"] if direction == "BEARISH" else curr["Low"]
+            zones = check_zone(df, len(df)-2, direction, sweep_price)
+            if not zones:
+                print(f"{name} {tf} sweep but NO ZONE - skipped")
                 continue
 
             candle_start = df.index[-2]
@@ -113,6 +179,7 @@ def check_pair(name, ticker):
             if key in sent_alerts:
                 continue
             sent_alerts.add(key)
+            zone_text = " + ".join(zones)
             results.append(
                 f"🚨 {crt} on {name} - {tf}\n"
                 f"Date & Time Closed: {to_lagos(close_time)} (Lagos)\n"
@@ -121,43 +188,52 @@ def check_pair(name, ticker):
                 f"2nd Candle (Sweep) Open: {fmt_price(name, curr['Open'])}\n"
                 f"2nd Candle (Sweep) Close: {fmt_price(name, curr['Close'])}\n"
                 f"2nd Candle High: {fmt_price(name, curr['High'])}\n"
-                f"2nd Candle Low: {fmt_price(name, curr['Low'])}"
+                f"2nd Candle Low: {fmt_price(name, curr['Low'])}\n"
+                f"📍 Zone: Sweep at {zone_text} ✅"
             )
 
         df_1h = yf.download(ticker, period="60d", interval="60m", progress=False, auto_adjust=False)
-        if not df_1h.empty and len(df_1h) > 10:
+        if not df_1h.empty and len(df_1h) > 35:
             if isinstance(df_1h.columns, pd.MultiIndex):
                 df_1h.columns = df_1h.columns.get_level_values(0)
             df_4h = df_1h.resample("4h").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
-            if len(df_4h) >= 3:
+            if len(df_4h) >= 35:
                 prev = df_4h.iloc[-3]
                 curr = df_4h.iloc[-2]
                 crt = is_crt_sweep(prev, curr)
                 if crt:
-                    candle_start = df_4h.index[-2]
-                    if candle_start.tzinfo is None:
-                        candle_start = candle_start.replace(tzinfo=timezone.utc)
-                    close_time = candle_start + timedelta(hours=4)
-                    if close_time >= BOT_START and 0 <= (now - close_time).total_seconds() <= 900:
-                        key = f"{name}-4H-{close_time}-{crt}"
-                        if key not in sent_alerts:
-                            sent_alerts.add(key)
-                            results.append(
-                                f"🚨 {crt} on {name} - 4H\n"
-                                f"Date & Time Closed: {to_lagos(close_time)} (Lagos)\n"
-                                f"Range Candle High (BSL/CRH): {fmt_price(name, prev['High'])}\n"
-                                f"Range Candle Low (SSL/CRL): {fmt_price(name, prev['Low'])}\n"
-                                f"2nd Candle (Sweep) Open: {fmt_price(name, curr['Open'])}\n"
-                                f"2nd Candle (Sweep) Close: {fmt_price(name, curr['Close'])}\n"
-                                f"2nd Candle High: {fmt_price(name, curr['High'])}\n"
-                                f"2nd Candle Low: {fmt_price(name, curr['Low'])}"
-                            )
+                    direction = "BEARISH" if "BEARISH" in crt else "BULLISH"
+                    sweep_price = curr["High"] if direction == "BEARISH" else curr["Low"]
+                    zones = check_zone(df_4h, len(df_4h)-2, direction, sweep_price)
+                    if zones:
+                        candle_start = df_4h.index[-2]
+                        if candle_start.tzinfo is None:
+                            candle_start = candle_start.replace(tzinfo=timezone.utc)
+                        close_time = candle_start + timedelta(hours=4)
+                        if close_time >= BOT_START and 0 <= (now - close_time).total_seconds() <= 900:
+                            key = f"{name}-4H-{close_time}-{crt}"
+                            if key not in sent_alerts:
+                                sent_alerts.add(key)
+                                zone_text = " + ".join(zones)
+                                results.append(
+                                    f"🚨 {crt} on {name} - 4H\n"
+                                    f"Date & Time Closed: {to_lagos(close_time)} (Lagos)\n"
+                                    f"Range Candle High (BSL/CRH): {fmt_price(name, prev['High'])}\n"
+                                    f"Range Candle Low (SSL/CRL): {fmt_price(name, prev['Low'])}\n"
+                                    f"2nd Candle (Sweep) Open: {fmt_price(name, curr['Open'])}\n"
+                                    f"2nd Candle (Sweep) Close: {fmt_price(name, curr['Close'])}\n"
+                                    f"2nd Candle High: {fmt_price(name, curr['High'])}\n"
+                                    f"2nd Candle Low: {fmt_price(name, curr['Low'])}\n"
+                                    f"📍 Zone: Sweep at {zone_text} ✅"
+                                )
+                    else:
+                        print(f"{name} 4H sweep but NO ZONE - skipped")
     except Exception as e:
         print(f"Error {name}: {e}")
     return results
 
-print("CRT Bot Started - COMBINED MODE")
-send_telegram("✅ CRT Bot ONLINE - COMBINED MODE\nPrevious pairs + New sweep logic.\n2nd candle sweep liquidity -> signal immediately after close.")
+print("CRT Bot Started - ZONE MODE")
+send_telegram("✅ CRT Bot ONLINE - ZONE MODE\nSweep must be at Supply/Demand OR POI OR FVG OR OB OR Support/Resistance.\nSignal immediately after 2nd candle close.")
 
 while True:
     print(f"Checking... {datetime.now()}")
