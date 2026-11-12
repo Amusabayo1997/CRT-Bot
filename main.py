@@ -230,28 +230,4 @@ def scan():
                 tf = TF_LABEL[interval]
                 close_time = get_close_time(result['sweep']['time'], interval)
                 msg = (
-                    f"{result['emoji']} CRT {result['type']} - {clean} {tf}\n"
-                    f"Price: {result['sweep']['close']:.5f}\n"
-                    f"Ref High: {result['ref']['high']:.5f}\n"
-                    f"Ref Low: {result['ref']['low']:.5f}\n"
-                    f"50% Eq: {result['mid']:.5f}\n"
-                    f"Sweep High: {result['sweep']['high']:.5f}\n"
-                    f"Sweep Low: {result['sweep']['low']:.5f}\n"
-                    f"Sweep Close: {result['sweep']['close']:.5f}\n"
-                    f"AOI: {result['aoi']}\n"
-                    f"HTF Bias: {result.get('htf_tf','')} {result.get('htf_bias','')} ✅ Aligned\n"
-                    f"Sweep Candle Open: {result['sweep']['time']}\n"
-                    f"Sweep Candle Closed: {close_time}\n"
-                    f"Ref Candle: {result['ref']['time']}"
-                )
-                send_telegram(msg)
-                print(f"Signal: {clean} {tf} {result['type']} AOI:{result['aoi']} HTF:{result.get('htf_bias')}", flush=True)
-
-if __name__ == "__main__":
-    send_telegram("✅ CRT Bot Started - V3.1 HTF Bias | 15min Scan | Free Web Service")
-    while True:
-        try:
-            scan()
-        except Exception as e:
-            print("Scan error:", e, flush=True)
-        time.sleep(900)
+                    f"{result['emoji']} CRT {result['type']}
