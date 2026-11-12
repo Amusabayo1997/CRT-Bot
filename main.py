@@ -3,10 +3,31 @@ import time
 import requests
 import datetime
 import calendar
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 TWELVE_KEY = os.getenv("TWELVE_KEY")
+
+# Dummy server for Render FREE Web Service
+def run_dummy_server():
+    port = int(os.getenv("PORT", 10000))
+    print(f"Starting dummy server on port {port}", flush=True)
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"CRT Bot Running")
+        def log_message(self, format, *args):
+            return
+    try:
+        HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    except Exception as e:
+        print(f"Dummy server error: {e}", flush=True)
+
+threading.Thread(target=run_dummy_server, daemon=True).start()
+print("Dummy server thread started", flush=True)
 
 SYMBOLS = [
     "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD", "NZD/USD", "USD/CAD",
@@ -16,7 +37,6 @@ SYMBOLS = [
     "CAD/JPY", "CAD/CHF", "NZD/JPY", "NZD/CHF", "NZD/CAD", "CHF/JPY",
     "XAU/USD", "XAG/USD", "BTC/USD", "ETH/USD",
 ]
-
 TIMEFRAMES = ["4h", "1day", "1week", "1month"]
 TF_LABEL = {"4h": "H4", "1day": "D1", "1week": "W1", "1month": "MN1"}
 HTF_MAP = {"4h": "1day", "1day": "1week", "1week": "1month", "1month": None}
@@ -24,14 +44,14 @@ SENT = set()
 
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("No Telegram token/chat")
+        print("No Telegram token/chat", flush=True)
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
-        print("Telegram sent")
+        print("Telegram sent", flush=True)
     except Exception as e:
-        print("Telegram error:", e)
+        print("Telegram error:", e, flush=True)
 
 def get_candles(symbol, interval):
     try:
@@ -40,7 +60,7 @@ def get_candles(symbol, interval):
         r = requests.get(url, params=params, timeout=20)
         data = r.json()
         if "values" not in data:
-            print(f"No data {symbol} {interval}: {data.get('message','')[:100]}")
+            print(f"No data {symbol} {interval}: {data.get('message','')[:100]}", flush=True)
             return []
         candles = list(reversed(data["values"]))
         out = []
@@ -48,7 +68,7 @@ def get_candles(symbol, interval):
             out.append({"time": c["datetime"], "open": float(c["open"]), "high": float(c["high"]), "low": float(c["low"]), "close": float(c["close"])})
         return out
     except Exception as e:
-        print(f"Fetch error {symbol} {interval}: {e}")
+        print(f"Fetch error {symbol} {interval}: {e}", flush=True)
         return []
 
 def get_close_time(sweep_time_str, interval):
@@ -179,7 +199,7 @@ def check_crt(symbol, interval, candles, htf_candles=None):
     if htf_interval and htf_candles:
         htf_bias = get_htf_bias(htf_candles)
         if htf_bias and htf_bias != direction:
-            print(f"HTF REJECT: {symbol} {interval} {direction} vs HTF {htf_interval} {htf_bias}")
+            print(f"HTF REJECT: {symbol} {interval} {direction} vs HTF {htf_interval} {htf_bias}", flush=True)
             return None
         signal["htf_bias"] = htf_bias
         signal["htf_tf"] = TF_LABEL[htf_interval]
@@ -192,7 +212,7 @@ def check_crt(symbol, interval, candles, htf_candles=None):
     return None
 
 def scan():
-    print(f"--- Scan started {datetime.datetime.now()} ---")
+    print(f"--- Scan started {datetime.datetime.now()} ---", flush=True)
     for symbol in SYMBOLS:
         clean = symbol.replace("/", "")
         all_candles = {}
@@ -225,13 +245,13 @@ def scan():
                     f"Ref Candle: {result['ref']['time']}"
                 )
                 send_telegram(msg)
-                print(f"Signal: {clean} {tf} {result['type']} AOI:{result['aoi']} HTF:{result.get('htf_bias')}")
+                print(f"Signal: {clean} {tf} {result['type']} AOI:{result['aoi']} HTF:{result.get('htf_bias')}", flush=True)
 
 if __name__ == "__main__":
-    send_telegram("✅ CRT Bot Started - V3.1 HTF Bias | 15min Scan\nMajors + Minors + XAU XAG BTC ETH\nH4->D1 | D1->W1 | W1->MN1 | Closed Candle Only | AOI Only | Time in WAT")
+    send_telegram("✅ CRT Bot Started - V3.1 HTF Bias | 15min Scan | Free Web Service")
     while True:
         try:
             scan()
         except Exception as e:
-            print("Scan error:", e)
+            print("Scan error:", e, flush=True)
         time.sleep(900)
